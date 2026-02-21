@@ -203,8 +203,6 @@
 # if __name__ == "__main__":
 #     main()
 
-
-
 from docx import Document as DocxDocument
 import streamlit as st
 import os
@@ -220,16 +218,14 @@ from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
 import google.generativeai as genai
 import pdfplumber
-# load_dotenv()
-# Make sure the environment variable is loaded correctly
-GOOGLE_API_KEY= st.secrets["GOOGLE_API_KEY"]
+
 load_dotenv()
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-SIMILARITY_THRESHOLD = 0.45   # cosine distance; lower = more similar in FAISS L2
-LOW_CONFIDENCE_CUTOFF = 30    # if parsed confidence < this, refuse to show answer
+SIMILARITY_THRESHOLD = 1.2   # FAISS L2 distance threshold; tune this based on your embeddings
+LOW_CONFIDENCE_CUTOFF = 30
 
 api_key = os.getenv("GOOGLE_API_KEY")
 if api_key is None:
@@ -248,180 +244,688 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    :root {
+        --bg-base:        #080c14;
+        --bg-surface:     #0d1220;
+        --bg-elevated:    #111827;
+        --bg-card:        #141d2e;
+        --border:         #1e2d45;
+        --border-bright:  #243650;
+        --accent:         #00d4ff;
+        --accent-dim:     #00a3c4;
+        --accent-glow:    rgba(0, 212, 255, 0.12);
+        --accent-glow2:   rgba(0, 212, 255, 0.06);
+        --success:        #00e5a0;
+        --success-bg:     rgba(0, 229, 160, 0.08);
+        --warn:           #ffb347;
+        --warn-bg:        rgba(255, 179, 71, 0.08);
+        --danger:         #ff5c5c;
+        --danger-bg:      rgba(255, 92, 92, 0.08);
+        --text-primary:   #e8edf5;
+        --text-secondary: #7a8fa8;
+        --text-muted:     #3d5068;
+        --font-main:      'Space Grotesk', sans-serif;
+        --font-mono:      'JetBrains Mono', monospace;
+        --radius-sm:      6px;
+        --radius-md:      10px;
+        --radius-lg:      14px;
+    }
 
     html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans', sans-serif;
+        font-family: var(--font-main);
     }
 
-    .main { background-color: #0f1117; }
-
+    /* ── Base ── */
     .stApp {
-        background: linear-gradient(135deg, #0f1117 0%, #1a1d2e 100%);
+        background: var(--bg-base);
+    }
+    .main .block-container {
+        padding: 2rem 2.5rem 3rem;
+        max-width: 960px;
     }
 
-    h1, h2, h3 { font-family: 'IBM Plex Mono', monospace; color: #e2e8f0; }
+    /* ── Sidebar ── */
+    section[data-testid="stSidebar"] {
+        background: var(--bg-surface);
+        border-right: 1px solid var(--border);
+    }
+    section[data-testid="stSidebar"] > div {
+        padding: 1.5rem 1.2rem;
+    }
+    section[data-testid="stSidebar"] * {
+        color: var(--text-primary) !important;
+    }
 
-    .hero-title {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 2rem;
+    /* Sidebar title */
+    .sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0.6rem 0 1.2rem;
+    }
+    .sidebar-brand-icon {
+        font-size: 1.4rem;
+        line-height: 1;
+    }
+    .sidebar-brand-text {
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
         font-weight: 600;
-        color: #38bdf8;
-        letter-spacing: -0.5px;
-        margin-bottom: 0;
+        color: var(--accent) !important;
+        letter-spacing: 0.5px;
+        line-height: 1.3;
     }
-    .hero-sub {
-        color: #64748b;
-        font-size: 0.9rem;
-        margin-top: 4px;
-        font-family: 'IBM Plex Mono', monospace;
-    }
-
-    /* Answer card */
-    .answer-card {
-        background: #1e2235;
-        border: 1px solid #2d3748;
-        border-left: 4px solid #38bdf8;
-        border-radius: 8px;
-        padding: 1.2rem 1.5rem;
-        margin: 1rem 0;
+    .sidebar-brand-sub {
+        font-size: 0.65rem;
+        color: var(--text-muted) !important;
+        font-weight: 400;
+        letter-spacing: 0.5px;
     }
 
-    .answer-label {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.7rem;
-        color: #64748b;
+    /* ── Top toolbar / deploy bar ── */
+    header[data-testid="stHeader"] {
+        background: var(--bg-surface) !important;
+        border-bottom: 1px solid var(--border) !important;
+    }
+    header[data-testid="stHeader"] * {
+        color: var(--text-secondary) !important;
+    }
+    /* The top-right deploy/menu toolbar */
+    [data-testid="stToolbar"] {
+        background: var(--bg-surface) !important;
+        border-bottom: 1px solid var(--border) !important;
+    }
+    [data-testid="stToolbar"] button,
+    [data-testid="stToolbar"] a {
+        color: var(--text-secondary) !important;
+    }
+    /* Full-width white bar at very top */
+    .stDeployButton, [data-testid="stDecoration"] {
+        background: var(--bg-surface) !important;
+        display: none !important;
+    }
+    /* App top chrome */
+    #root > div:first-child > div:first-child {
+        background: var(--bg-surface) !important;
+    }
+    /* Iframe / top bar */
+    .viewerBadge_container__1QSob,
+    .viewerBadge_link__1S137 {
+        display: none !important;
+    }
+
+    /* ── Upload area ── */
+    [data-testid="stFileUploader"] {
+        border: 1.5px dashed var(--border-bright) !important;
+        border-radius: var(--radius-md) !important;
+        background: var(--bg-elevated) !important;
+        transition: border-color 0.2s;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: var(--accent-dim) !important;
+    }
+    /* Upload drop zone inner area */
+    [data-testid="stFileUploaderDropzone"] {
+        background: var(--bg-elevated) !important;
+        border: 1.5px dashed var(--border-bright) !important;
+        border-radius: var(--radius-md) !important;
+    }
+    [data-testid="stFileUploaderDropzone"]:hover {
+        border-color: var(--accent-dim) !important;
+        background: var(--bg-card) !important;
+    }
+    /* Upload zone text */
+    [data-testid="stFileUploaderDropzoneInstructions"] {
+        color: var(--text-secondary) !important;
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"] small,
+    [data-testid="stFileUploaderDropzoneInstructions"] span {
+        color: var(--text-muted) !important;
+    }
+    /* Browse files button inside uploader */
+    [data-testid="stFileUploaderDropzone"] button {
+        background: var(--bg-card) !important;
+        color: var(--accent) !important;
+        border: 1px solid var(--border-bright) !important;
+        border-radius: var(--radius-sm) !important;
+        font-family: var(--font-mono) !important;
+        font-size: 0.75rem !important;
+        font-weight: 500 !important;
+    }
+    [data-testid="stFileUploaderDropzone"] button:hover {
+        background: var(--accent-glow) !important;
+        border-color: var(--accent-dim) !important;
+    }
+    /* Uploaded file item */
+    [data-testid="stFileUploaderFile"] {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-sm) !important;
+    }
+    [data-testid="stFileUploaderFile"] * {
+        color: var(--text-secondary) !important;
+    }
+    /* Label above uploader */
+    [data-testid="stFileUploader"] label {
+        color: var(--text-secondary) !important;
+        font-family: var(--font-mono) !important;
+        font-size: 0.78rem !important;
+    }
+
+    /* Sidebar stats box */
+    .stats-box {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 0.9rem 1rem;
+        margin-top: 0.5rem;
+    }
+    .stats-label {
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        color: var(--text-muted);
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 1.5px;
+        margin-bottom: 0.6rem;
+    }
+    .stats-file {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        color: var(--accent);
+        background: var(--accent-glow2);
+        border: 1px solid var(--border-bright);
+        border-radius: var(--radius-sm);
+        padding: 3px 8px;
+        display: inline-block;
+        margin-bottom: 4px;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .stats-count {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-top: 6px;
+    }
+    .stats-count span {
+        color: var(--success);
+        font-weight: 600;
+    }
+
+    /* Guardrails info */
+    .guardrails {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 0.9rem 1rem;
+        margin-top: 0.8rem;
+    }
+    .guardrails-title {
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 0.6rem;
+    }
+    .guardrail-item {
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        padding: 3px 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .guardrail-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--accent);
+        flex-shrink: 0;
+    }
+
+    /* ── Header ── */
+    .page-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 2rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .header-icon-wrap {
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
+        background: var(--accent-glow);
+        border: 1px solid rgba(0,212,255,0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.6rem;
+        flex-shrink: 0;
+    }
+    .header-title {
+        font-family: var(--font-mono);
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        letter-spacing: -0.5px;
+        line-height: 1;
         margin-bottom: 6px;
     }
-
-    .answer-text {
-        color: #e2e8f0;
-        font-size: 0.95rem;
-        line-height: 1.7;
+    .header-title span { color: var(--accent); }
+    .header-sub {
+        font-size: 0.82rem;
+        color: var(--text-secondary);
+        font-weight: 400;
     }
-
-    /* Confidence badge */
-    .badge-high {
-        display: inline-block;
-        background: #064e3b;
-        color: #34d399;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 3px 12px;
-        border-radius: 20px;
-        border: 1px solid #34d399;
+    .header-pills {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+        flex-wrap: wrap;
     }
-    .badge-mid {
-        display: inline-block;
-        background: #451a03;
-        color: #fb923c;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 3px 12px;
+    .header-pill {
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        border: 1px solid var(--border);
         border-radius: 20px;
-        border: 1px solid #fb923c;
-    }
-    .badge-low {
-        display: inline-block;
-        background: #450a0a;
-        color: #f87171;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 3px 12px;
-        border-radius: 20px;
-        border: 1px solid #f87171;
+        padding: 2px 10px;
+        letter-spacing: 0.5px;
     }
 
-    /* Source chunk */
-    .source-chunk {
-        background: #141824;
-        border: 1px solid #2d3748;
-        border-radius: 6px;
-        padding: 0.8rem 1rem;
-        margin: 0.4rem 0;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.78rem;
-        color: #94a3b8;
-        line-height: 1.6;
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: transparent !important;
+        border-bottom: 1px solid var(--border) !important;
+        gap: 0 !important;
+        padding: 0 !important;
     }
-    .source-header {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.7rem;
-        color: #38bdf8;
+    .stTabs [data-baseweb="tab"] {
+        font-family: var(--font-mono) !important;
+        font-size: 0.78rem !important;
+        font-weight: 500 !important;
+        color: var(--text-muted) !important;
+        padding: 0.7rem 1.2rem !important;
+        border-bottom: 2px solid transparent !important;
+        background: transparent !important;
+        transition: color 0.2s !important;
+        letter-spacing: 0.3px;
+    }
+    .stTabs [aria-selected="true"] {
+        color: var(--accent) !important;
+        border-bottom-color: var(--accent) !important;
+    }
+    .stTabs [data-baseweb="tab-panel"] {
+        padding: 1.5rem 0 0 !important;
+    }
+
+    /* ── Buttons ── */
+    .stButton > button {
+        background: var(--accent) !important;
+        color: #000 !important;
+        border: none !important;
+        border-radius: var(--radius-sm) !important;
+        font-family: var(--font-mono) !important;
+        font-weight: 600 !important;
+        font-size: 0.8rem !important;
+        padding: 0.55rem 1.4rem !important;
+        letter-spacing: 0.3px;
+        transition: all 0.15s ease !important;
+        width: 100% !important;
+    }
+    .stButton > button:hover {
+        background: #33ddff !important;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 20px var(--accent-glow) !important;
+    }
+    .stButton > button:active {
+        transform: translateY(0) !important;
+    }
+
+    /* ── Text Input ── */
+    .stTextInput > div > div > input {
+        background: var(--bg-card) !important;
+        color: var(--text-primary) !important;
+        border: 1.5px solid var(--border-bright) !important;
+        border-radius: var(--radius-md) !important;
+        font-family: var(--font-main) !important;
+        font-size: 0.9rem !important;
+        padding: 0.7rem 1rem !important;
+        transition: border-color 0.2s !important;
+    }
+    .stTextInput > div > div > input:focus {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-glow) !important;
+    }
+    .stTextInput > div > div > input::placeholder {
+        color: var(--text-muted) !important;
+    }
+
+    /* ── Answer Card ── */
+    .answer-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-bright);
+        border-top: 3px solid var(--accent);
+        border-radius: var(--radius-lg);
+        padding: 1.4rem 1.6rem;
+        margin: 1.2rem 0;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        animation: slideIn 0.3s ease;
+    }
+    @keyframes slideIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    .answer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.9rem;
+    }
+    .answer-label {
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        color: var(--text-muted);
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 1.5px;
+    }
+    .answer-text {
+        color: var(--text-primary);
+        font-size: 0.94rem;
+        line-height: 1.8;
+        font-weight: 400;
+    }
+
+    /* ── Confidence Badges ── */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 20px;
+        letter-spacing: 0.3px;
+    }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .badge-high {
+        background: var(--success-bg);
+        color: var(--success);
+        border: 1px solid rgba(0, 229, 160, 0.3);
+    }
+    .badge-high .badge-dot { background: var(--success); }
+    .badge-mid {
+        background: var(--warn-bg);
+        color: var(--warn);
+        border: 1px solid rgba(255, 179, 71, 0.3);
+    }
+    .badge-mid .badge-dot { background: var(--warn); }
+    .badge-low {
+        background: var(--danger-bg);
+        color: var(--danger);
+        border: 1px solid rgba(255, 92, 92, 0.3);
+    }
+    .badge-low .badge-dot { background: var(--danger); }
+    .badge-na {
+        background: rgba(122,143,168,0.08);
+        color: var(--text-secondary);
+        border: 1px solid var(--border);
+    }
+
+    /* ── Source Chunks ── */
+    .source-chunk {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--border-bright);
+        border-radius: var(--radius-md);
+        padding: 0.9rem 1.1rem;
+        margin: 0.5rem 0;
+        font-family: var(--font-mono);
+        font-size: 0.74rem;
+        color: var(--text-secondary);
+        line-height: 1.7;
+        transition: border-left-color 0.2s;
+    }
+    .source-chunk:hover { border-left-color: var(--accent-dim); }
+    .source-chunk-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         margin-bottom: 8px;
     }
-
-    /* Chat history item */
-    .history-item {
-        border-bottom: 1px solid #2d3748;
-        padding: 0.8rem 0;
-        margin: 0.3rem 0;
+    .source-chunk-label {
+        font-size: 0.62rem;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 1px;
     }
-    .history-q { color: #38bdf8; font-size: 0.85rem; font-weight: 600; }
-    .history-a { color: #94a3b8; font-size: 0.82rem; margin-top: 4px; }
-
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background: #141824;
-        border-right: 1px solid #2d3748;
-    }
-    section[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
-
-    /* Buttons */
-    .stButton > button {
-        background: #0369a1;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        font-family: 'IBM Plex Mono', monospace;
-        font-weight: 600;
-        font-size: 0.85rem;
-        padding: 0.5rem 1.2rem;
-        transition: background 0.2s;
-        width: 100%;
-    }
-    .stButton > button:hover { background: #0284c7; }
-
-    /* Text input */
-    .stTextInput > div > div > input {
-        background: #1e2235;
-        color: #e2e8f0;
-        border: 1px solid #2d3748;
-        border-radius: 6px;
-        font-family: 'IBM Plex Sans', sans-serif;
+    .source-chunk-score {
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 7px;
     }
 
-    /* Tabs */
-    .stTabs [data-baseweb="tab"] {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.82rem;
-        color: #64748b;
-    }
-    .stTabs [aria-selected="true"] { color: #38bdf8 !important; }
-
-    /* Refusal card */
+    /* ── Refusal Card ── */
     .refusal-card {
-        background: #1a0f0f;
-        border: 1px solid #7f1d1d;
-        border-left: 4px solid #ef4444;
-        border-radius: 8px;
-        padding: 1rem 1.4rem;
-        color: #fca5a5;
-        font-size: 0.9rem;
+        background: var(--danger-bg);
+        border: 1px solid rgba(255,92,92,0.2);
+        border-left: 3px solid var(--danger);
+        border-radius: var(--radius-md);
+        padding: 1.1rem 1.4rem;
+        color: #ffb3b3;
+        font-size: 0.88rem;
+        line-height: 1.7;
+        animation: slideIn 0.3s ease;
+    }
+    .refusal-card strong { color: var(--danger); }
+    .refusal-icon { font-size: 1rem; margin-right: 6px; }
+
+    /* ── Not Found Card ── */
+    .notfound-card {
+        background: var(--warn-bg);
+        border: 1px solid rgba(255,179,71,0.2);
+        border-left: 3px solid var(--warn);
+        border-radius: var(--radius-md);
+        padding: 1.1rem 1.4rem;
+        color: #ffe0a8;
+        font-size: 0.88rem;
+        line-height: 1.7;
+        animation: slideIn 0.3s ease;
+    }
+    .notfound-card strong { color: var(--warn); }
+
+    /* ── Example Chips ── */
+    .chips-section {
+        margin-top: 1.5rem;
+    }
+    .chips-label {
+        font-family: var(--font-mono);
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 0.7rem;
     }
 
-    div[data-testid="stCodeBlock"] {
-        background: #141824 !important;
-        border: 1px solid #2d3748;
-        border-radius: 8px;
+    /* Override chip buttons to look like chips */
+    div[data-chip="true"] .stButton > button {
+        background: var(--bg-elevated) !important;
+        color: var(--text-secondary) !important;
+        border: 1px solid var(--border-bright) !important;
+        font-family: var(--font-mono) !important;
+        font-size: 0.72rem !important;
+        font-weight: 400 !important;
+        padding: 0.35rem 0.9rem !important;
+        border-radius: 20px !important;
+        width: auto !important;
+        white-space: nowrap;
+        transition: all 0.15s !important;
     }
+    div[data-chip="true"] .stButton > button:hover {
+        background: var(--bg-card) !important;
+        border-color: var(--accent-dim) !important;
+        color: var(--accent) !important;
+        transform: none !important;
+        box-shadow: none !important;
+    }
+
+    /* ── History Items ── */
+    .history-item {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 1rem 1.2rem;
+        margin-bottom: 0.6rem;
+        transition: border-color 0.2s;
+    }
+    .history-item:hover { border-color: var(--border-bright); }
+    .history-q {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--accent);
+        margin-bottom: 5px;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .history-q-icon { color: var(--text-muted); flex-shrink: 0; }
+    .history-a {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        line-height: 1.6;
+        padding-left: 18px;
+    }
+    .history-meta {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        margin-top: 8px;
+    }
+
+    /* ── Divider ── */
+    hr {
+        border: none !important;
+        border-top: 1px solid var(--border) !important;
+        margin: 1.5rem 0 !important;
+    }
+
+    /* ── Section Heading ── */
+    .section-heading {
+        font-family: var(--font-mono);
+        font-size: 0.68rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-bottom: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .section-heading::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+    }
+
+    /* ── Empty State ── */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 4rem 2rem;
+        text-align: center;
+    }
+    .empty-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.4;
+    }
+    .empty-title {
+        font-family: var(--font-mono);
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.4rem;
+    }
+    .empty-sub {
+        font-size: 0.78rem;
+        color: var(--text-muted);
+    }
+
+    /* ── JSON Display ── */
+    div[data-testid="stJson"] {
+        background: var(--bg-elevated) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+    }
+
+    /* ── Spinner ── */
+    .stSpinner > div { border-top-color: var(--accent) !important; }
+
+    /* ── Expander ── */
+    details {
+        background: var(--bg-elevated) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+        padding: 0 !important;
+    }
+    summary {
+        font-family: var(--font-mono) !important;
+        font-size: 0.78rem !important;
+        color: var(--text-secondary) !important;
+        padding: 0.7rem 1rem !important;
+    }
+    details[open] summary { border-bottom: 1px solid var(--border); }
+
+    /* ── Process button — special override ── */
+    .process-btn .stButton > button {
+        background: transparent !important;
+        color: var(--accent) !important;
+        border: 1.5px solid var(--accent) !important;
+        font-size: 0.78rem !important;
+    }
+    .process-btn .stButton > button:hover {
+        background: var(--accent-glow) !important;
+        box-shadow: 0 4px 16px var(--accent-glow) !important;
+    }
+
+    /* Field summary grid */
+    .field-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0.55rem 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.82rem;
+    }
+    .field-row:last-child { border-bottom: none; }
+    .field-name {
+        color: var(--text-secondary);
+        min-width: 150px;
+        font-size: 0.78rem;
+    }
+    .field-value {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--text-primary);
+    }
+    .field-null {
+        color: var(--text-muted);
+        font-style: italic;
+    }
+    .field-check { color: var(--success); font-size: 0.75rem; }
+    .field-empty { color: var(--text-muted); font-size: 0.75rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -490,11 +994,6 @@ def get_vector_store(text_chunks):
 # CONFIDENCE PARSING
 # ─────────────────────────────────────────────
 def parse_confidence(text: str) -> int:
-    """
-    Extract the confidence integer the LLM returns.
-    Looks for patterns like: Confidence: 87 | confidence score: 72% | [confidence: 90]
-    Falls back to None if not found.
-    """
     patterns = [
         r"confidence[^\d]{0,15}(\d{1,3})",
         r"(\d{1,3})\s*(?:%|percent)\s*confident",
@@ -509,9 +1008,7 @@ def parse_confidence(text: str) -> int:
     return None
 
 def split_answer_and_confidence(raw: str):
-    """Return (clean_answer, confidence_int_or_None)."""
     confidence = parse_confidence(raw)
-    # Strip the confidence line from the displayed answer
     clean = re.sub(
         r"(confidence\s*(?:score)?[:\s\-]*\d{1,3}\s*%?\.?)",
         "",
@@ -522,35 +1019,25 @@ def split_answer_and_confidence(raw: str):
 
 def confidence_badge_html(score: int) -> str:
     if score is None:
-        return '<span class="badge-mid">Confidence: N/A</span>'
+        return '<span class="badge badge-na"><span class="badge-dot"></span>N/A</span>'
     elif score >= 70:
-        return f'<span class="badge-high">Confidence: {score}%</span>'
+        return f'<span class="badge badge-high"><span class="badge-dot"></span>{score}% confidence</span>'
     elif score >= 40:
-        return f'<span class="badge-mid">Confidence: {score}%</span>'
+        return f'<span class="badge badge-mid"><span class="badge-dot"></span>{score}% confidence</span>'
     else:
-        return f'<span class="badge-low">Confidence: {score}%</span>'
+        return f'<span class="badge badge-low"><span class="badge-dot"></span>{score}% confidence</span>'
 
 
 # ─────────────────────────────────────────────
 # RETRIEVAL WITH SIMILARITY GUARD
 # ─────────────────────────────────────────────
 def retrieve_with_scores(question: str, vector_store):
-    """
-    Returns (docs, scores, passed_threshold).
-    FAISS returns L2 distances — lower is better.
-    We convert to a 0-100 similarity score for display.
-    """
     results = vector_store.similarity_search_with_score(question, k=4)
     docs = [r[0] for r in results]
     raw_scores = [r[1] for r in results]
-
-    # Best (lowest) L2 distance
     best_score = min(raw_scores)
     passed = best_score <= SIMILARITY_THRESHOLD
-
-    # Convert L2 distance → 0-100 similarity for display (heuristic)
-    display_scores = [max(0, round((1 - s / 2) * 100)) for s in raw_scores]
-
+    display_scores = [max(0, round((1 - s / 2) * 100)) for s in raw_scores]  # heuristic: L2=0→100%, L2=2→0%
     return docs, display_scores, passed, best_score
 
 
@@ -591,18 +1078,17 @@ def handle_question(user_question: str, vector_store):
         user_question, vector_store
     )
 
-    # ── GUARDRAIL 1: Retrieval similarity too low ──
     if not passed_threshold:
         retrieval_score = display_scores[0] if display_scores else 0
         st.markdown(f"""
         <div class="refusal-card">
-            ⚠️ <strong>Low retrieval confidence — answer refused.</strong><br><br>
-            The best matching chunk in your document has a similarity score of
-            <strong>{retrieval_score}%</strong>, which is below the minimum threshold.
+            <span class="refusal-icon">⚠</span>
+            <strong>Low retrieval confidence — answer refused</strong><br>
+            Best matching chunk has L2 distance <strong>{best_l2:.3f}</strong> (threshold: {SIMILARITY_THRESHOLD}).
+            Displayed similarity: <strong>{retrieval_score}%</strong>.
             This question likely refers to content not present in the uploaded document.
         </div>
         """, unsafe_allow_html=True)
-
         _record_history(user_question, "⚠️ Refused — low retrieval similarity.", None)
         return
 
@@ -613,11 +1099,11 @@ def handle_question(user_question: str, vector_store):
     )
     raw_answer = response["output_text"]
 
-    # ── GUARDRAIL 2: "Not found in document" passthrough ──
     if "not found in document" in raw_answer.lower():
         st.markdown("""
-        <div class="refusal-card">
-            🔍 <strong>Not found in document.</strong><br>
+        <div class="notfound-card">
+            <span class="refusal-icon">🔍</span>
+            <strong>Not found in document</strong><br>
             The uploaded document does not contain information to answer this question.
         </div>
         """, unsafe_allow_html=True)
@@ -626,34 +1112,37 @@ def handle_question(user_question: str, vector_store):
 
     clean_answer, confidence = split_answer_and_confidence(raw_answer)
 
-    # ── GUARDRAIL 3: Parsed confidence too low ──
     if confidence is not None and confidence < LOW_CONFIDENCE_CUTOFF:
         st.markdown(f"""
         <div class="refusal-card">
-            ⚠️ <strong>Answer confidence too low ({confidence}%) — answer withheld.</strong><br><br>
-            The model was not confident enough in its answer based on the document content.
-            Try rephrasing your question or check if this information exists in the document.
+            <span class="refusal-icon">⚠</span>
+            <strong>Answer confidence too low ({confidence}%) — withheld</strong><br>
+            The model was not confident enough based on document content.
+            Try rephrasing your question or verify this information exists in the document.
         </div>
         """, unsafe_allow_html=True)
         _record_history(user_question, f"Withheld — confidence {confidence}%", confidence)
         return
 
-    # ── DISPLAY ANSWER ──
     badge = confidence_badge_html(confidence)
     st.markdown(f"""
     <div class="answer-card">
-        <div class="answer-label">Answer &nbsp;·&nbsp; {badge}</div>
+        <div class="answer-header">
+            <span class="answer-label">Response</span>
+            {badge}
+        </div>
         <div class="answer-text">{clean_answer}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── DISPLAY SOURCE CHUNKS ──
-    with st.expander("📄 Source Chunks Used", expanded=False):
-        st.markdown('<div class="source-header">Retrieved context passages</div>', unsafe_allow_html=True)
+    with st.expander("View source chunks"):
         for i, (doc, score) in enumerate(zip(docs, display_scores)):
             st.markdown(f"""
             <div class="source-chunk">
-                <span style="color:#38bdf8; font-size:0.7rem;">CHUNK {i+1} · Similarity {score}%</span><br><br>
+                <div class="source-chunk-header">
+                    <span class="source-chunk-label">Chunk {i+1}</span>
+                    <span class="source-chunk-score">{score}% match</span>
+                </div>
                 {doc.page_content}
             </div>
             """, unsafe_allow_html=True)
@@ -697,8 +1186,6 @@ def run_extraction(vector_store):
     docs, display_scores, passed_threshold, _ = retrieve_with_scores(
         EXTRACTION_QUESTION, vector_store
     )
-
-    # For extraction, use a lower threshold and fetch more chunks
     all_docs, _, _, _ = retrieve_with_scores("shipment shipper consignee rate carrier", vector_store)
     docs = list({d.page_content: d for d in docs + all_docs}.values())
 
@@ -709,12 +1196,9 @@ def run_extraction(vector_store):
     )
 
     raw = response["output_text"].strip()
-
-    # Strip markdown fences if model ignores instructions
     raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
     raw = re.sub(r"```$", "", raw).strip()
 
-    # Find JSON block
     json_match = re.search(r"\{.*\}", raw, re.DOTALL)
     if json_match:
         raw = json_match.group(0)
@@ -727,56 +1211,69 @@ def run_extraction(vector_store):
 
 
 # ─────────────────────────────────────────────
-# SIDEBAR — UPLOAD
+# SIDEBAR
 # ─────────────────────────────────────────────
 def render_sidebar():
     with st.sidebar:
-        st.markdown("### 🚚 TMS Doc Intelligence")
-        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
-        st.markdown("---")
+        st.markdown("""
+        <div class="sidebar-brand">
+            <span class="sidebar-brand-icon">📦</span>
+            <div>
+                <div class="sidebar-brand-text">TMS Intelligence</div>
+                <div class="sidebar-brand-sub">LOGISTICS · DOCUMENT · AI</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
         uploaded_files = st.file_uploader(
             "Upload Document(s)",
             type=["pdf", "docx", "txt"],
             accept_multiple_files=True,
-            help="Supported: PDF, DOCX, TXT"
+            help="Supported: PDF, DOCX, TXT · Max 200MB per file"
         )
 
-        if st.button("⚙️  Process Documents"):
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="process-btn">', unsafe_allow_html=True)
+        if st.button("⚙  Process Documents"):
             if uploaded_files:
-                with st.spinner("Extracting text and building index..."):
+                with st.spinner("Building index..."):
                     raw_text = extract_text_from_files(uploaded_files)
                     if not raw_text.strip():
-                        st.error("No text could be extracted from the uploaded files.")
+                        st.error("No text could be extracted.")
                     else:
                         chunks = get_text_chunks(raw_text)
                         st.session_state.vector_store = get_vector_store(chunks)
                         st.session_state.raw_text = raw_text
                         st.session_state.chunk_count = len(chunks)
                         st.session_state.file_names = [f.name for f in uploaded_files]
-                        # Clear history on new upload
                         st.session_state.chat_history = []
-                        st.success(f"✅ Indexed {len(chunks)} chunks from {len(uploaded_files)} file(s).")
+                        st.success(f"✓ Indexed {len(chunks)} chunks from {len(uploaded_files)} file(s)")
             else:
                 st.warning("Please upload at least one file.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Show processing stats
         if st.session_state.get("vector_store"):
-            st.markdown("---")
-            st.markdown("**📊 Index Stats**")
             names = st.session_state.get("file_names", [])
-            for n in names:
-                st.markdown(f"- `{n}`")
-            st.markdown(f"- **{st.session_state.get('chunk_count', '?')} chunks** indexed")
+            chunks = st.session_state.get("chunk_count", 0)
+            files_html = "".join(f'<div class="stats-file">{n}</div>' for n in names)
+            st.markdown(f"""
+            <div class="stats-box">
+                <div class="stats-label">Index Active</div>
+                {files_html}
+                <div class="stats-count"><span>{chunks}</span> chunks indexed</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown("---")
         st.markdown("""
-        <div style="font-size:0.72rem; color:#475569; font-family:'IBM Plex Mono',monospace; line-height:1.7;">
-        <b style="color:#64748b;">Guardrails active:</b><br>
-        · Retrieval similarity threshold<br>
-        · LLM confidence scoring<br>
-        · "Not found" passthrough<br>
-        · Low-confidence answer refusal
+        <div class="guardrails">
+            <div class="guardrails-title">Active Guardrails</div>
+            <div class="guardrail-item"><span class="guardrail-dot"></span>Retrieval similarity threshold</div>
+            <div class="guardrail-item"><span class="guardrail-dot"></span>LLM confidence scoring</div>
+            <div class="guardrail-item"><span class="guardrail-dot"></span>"Not found" passthrough</div>
+            <div class="guardrail-item"><span class="guardrail-dot"></span>Low-confidence refusal</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -787,7 +1284,6 @@ def render_sidebar():
 # MAIN
 # ─────────────────────────────────────────────
 def main():
-    # Init session state
     if 'vector_store' not in st.session_state:
         st.session_state.vector_store = None
     if 'chat_history' not in st.session_state:
@@ -795,41 +1291,56 @@ def main():
 
     render_sidebar()
 
-    # ── HEADER ──
-    st.markdown('<div class="hero-title">📦 TMS Doc Intelligence</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-sub">Upload logistics documents · Ask questions · Extract structured data</div>', unsafe_allow_html=True)
-    st.markdown('<div style="height:24px"></div>', unsafe_allow_html=True)
+    # Header
+    st.markdown("""
+    <div class="page-header">
+        <div class="header-icon-wrap">📦</div>
+        <div>
+            <div class="header-title">TMS Doc <span>Intelligence</span></div>
+            <div class="header-sub">Upload logistics documents · Query with AI · Extract structured data</div>
+            <div class="header-pills">
+                <span class="header-pill">RAG · FAISS</span>
+                <span class="header-pill">Gemma 3 27B</span>
+                <span class="header-pill">Confidence Scoring</span>
+                <span class="header-pill">PDF · DOCX · TXT</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     if not st.session_state.vector_store:
-        st.info("👈 Upload and process a document from the sidebar to get started.")
+        st.markdown("""
+        <div class="empty-state">
+            <div class="empty-icon">⬆</div>
+            <div class="empty-title">No document indexed</div>
+            <div class="empty-sub">Upload a PDF, DOCX, or TXT file from the sidebar and click Process Documents</div>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
-    # ── TABS ──
-    tab_qa, tab_extract, tab_history = st.tabs(["💬  Ask Questions", "🗂️  Extract Data", "📜  History"])
+    tab_qa, tab_extract, tab_history = st.tabs(["  💬  Ask Questions  ", "  🗂  Extract Data  ", "  📜  History  "])
 
-    # ══════════════════════════════════════════
-    # TAB 1 — Q&A
-    # ══════════════════════════════════════════
+    # ══ TAB 1 — Q&A ══
     with tab_qa:
-        st.markdown("#### Ask a question about your document")
-        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-
         with st.form("qa_form", clear_on_submit=True):
             user_question = st.text_input(
-                "Your question",
+                "Question",
                 placeholder="e.g. What is the carrier rate? When is pickup scheduled?",
                 label_visibility="collapsed"
             )
             submitted = st.form_submit_button("Ask →")
 
         if submitted and user_question.strip():
-            with st.spinner("Retrieving and reasoning..."):
+            with st.spinner("Retrieving context and generating answer..."):
                 handle_question(user_question.strip(), st.session_state.vector_store)
 
-        # Quick example chips
-        st.markdown("---")
-        st.markdown("**Example questions:**")
-        cols = st.columns(3)
+        # Example chips
+        st.markdown("""
+        <div class="chips-section">
+            <div class="chips-label">Example questions</div>
+        </div>
+        """, unsafe_allow_html=True)
+
         examples = [
             "What is the carrier rate?",
             "Who is the consignee?",
@@ -838,78 +1349,86 @@ def main():
             "What is the shipper's name?",
             "What is the delivery date?",
         ]
+        cols = st.columns(3)
         for i, ex in enumerate(examples):
             with cols[i % 3]:
+                st.markdown('<div data-chip="true">', unsafe_allow_html=True)
                 if st.button(ex, key=f"ex_{i}"):
-                    with st.spinner("Retrieving and reasoning..."):
+                    with st.spinner("Retrieving context and generating answer..."):
                         handle_question(ex, st.session_state.vector_store)
+                st.markdown('</div>', unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════
-    # TAB 2 — STRUCTURED EXTRACTION
-    # ══════════════════════════════════════════
+    # ══ TAB 2 — EXTRACTION ══
     with tab_extract:
-        st.markdown("#### Structured Shipment Data Extraction")
-        st.markdown(
-            "Automatically extracts all standard TMS fields from your document. "
-            "Missing fields are returned as `null`.",
-        )
-        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="section-heading">Structured Extraction</div>
+        """, unsafe_allow_html=True)
+        st.markdown('<p style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:1rem;">Automatically extract all standard TMS fields. Missing fields return as <code style="font-family:var(--font-mono); font-size:0.78rem; color:var(--text-muted);">null</code>.</p>', unsafe_allow_html=True)
 
         if st.button("🔍  Run Extraction"):
-            with st.spinner("Extracting structured data..."):
+            with st.spinner("Extracting structured fields..."):
                 result, success = run_extraction(st.session_state.vector_store)
 
             if success:
-                st.success("Extraction complete.")
-                # Pretty JSON display
-                st.json(result)
+                st.success("Extraction complete")
 
-                # Visual field table
-                st.markdown("---")
-                st.markdown("**Field Summary**")
-                fields = [
-                    ("Shipment ID", result.get("shipment_id")),
-                    ("Shipper", result.get("shipper")),
-                    ("Consignee", result.get("consignee")),
-                    ("Pickup Datetime", result.get("pickup_datetime")),
-                    ("Delivery Datetime", result.get("delivery_datetime")),
-                    ("Equipment Type", result.get("equipment_type")),
-                    ("Mode", result.get("mode")),
-                    ("Rate", result.get("rate")),
-                    ("Currency", result.get("currency")),
-                    ("Weight", result.get("weight")),
-                    ("Carrier Name", result.get("carrier_name")),
-                ]
-                col1, col2 = st.columns(2)
-                for idx, (field, value) in enumerate(fields):
-                    col = col1 if idx % 2 == 0 else col2
-                    status = "✅" if value else "⬜"
-                    col.markdown(f"{status} **{field}:** `{value if value else 'null'}`")
+                col_json, col_fields = st.columns([1, 1])
+                with col_json:
+                    st.markdown('<div class="section-heading">Raw JSON</div>', unsafe_allow_html=True)
+                    st.json(result)
+
+                with col_fields:
+                    st.markdown('<div class="section-heading">Field Summary</div>', unsafe_allow_html=True)
+                    fields = [
+                        ("Shipment ID", result.get("shipment_id")),
+                        ("Shipper", result.get("shipper")),
+                        ("Consignee", result.get("consignee")),
+                        ("Pickup", result.get("pickup_datetime")),
+                        ("Delivery", result.get("delivery_datetime")),
+                        ("Equipment", result.get("equipment_type")),
+                        ("Mode", result.get("mode")),
+                        ("Rate", result.get("rate")),
+                        ("Currency", result.get("currency")),
+                        ("Weight", result.get("weight")),
+                        ("Carrier", result.get("carrier_name")),
+                    ]
+                    rows_html = ""
+                    for field, value in fields:
+                        if value:
+                            rows_html += f'<div class="field-row"><span class="field-check">✓</span><span class="field-name">{field}</span><span class="field-value">{value}</span></div>'
+                        else:
+                            rows_html += f'<div class="field-row"><span class="field-empty">○</span><span class="field-name">{field}</span><span class="field-value field-null">null</span></div>'
+                    st.markdown(f'<div style="background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:0.8rem 1rem;">{rows_html}</div>', unsafe_allow_html=True)
             else:
-                st.warning("Could not parse JSON from model response. Raw output:")
+                st.warning("Could not parse JSON from model response.")
                 st.code(result, language="text")
 
-    # ══════════════════════════════════════════
-    # TAB 3 — CHAT HISTORY
-    # ══════════════════════════════════════════
+    # ══ TAB 3 — HISTORY ══
     with tab_history:
-        st.markdown("#### Conversation History")
+        st.markdown('<div class="section-heading">Conversation History</div>', unsafe_allow_html=True)
 
         if not st.session_state.chat_history:
-            st.info("No questions asked yet in this session.")
+            st.markdown("""
+            <div class="empty-state">
+                <div class="empty-icon" style="font-size:2rem;">📜</div>
+                <div class="empty-title">No history yet</div>
+                <div class="empty-sub">Ask questions in the Q&A tab to populate history</div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            if st.button("🗑️  Clear History"):
+            if st.button("🗑  Clear History"):
                 st.session_state.chat_history = []
                 st.rerun()
 
-            for i, item in enumerate(st.session_state.chat_history):
+            for item in st.session_state.chat_history:
                 conf = item.get("confidence")
                 badge = confidence_badge_html(conf) if conf is not None else ""
+                preview = item['bot'][:280] + ('…' if len(item['bot']) > 280 else '')
                 st.markdown(f"""
                 <div class="history-item">
-                    <div class="history-q">Q: {item['user']}</div>
-                    <div class="history-a">A: {item['bot'][:300]}{'...' if len(item['bot']) > 300 else ''}</div>
-                    <div style="margin-top:4px">{badge}</div>
+                    <div class="history-q"><span class="history-q-icon">›</span>{item['user']}</div>
+                    <div class="history-a">{preview}</div>
+                    <div class="history-meta">{badge}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
