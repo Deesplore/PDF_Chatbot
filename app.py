@@ -5,11 +5,11 @@ import json
 import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain.schema.document import Document
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains.question_answering import load_qa_chain
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
 import google.generativeai as genai
 import pdfplumber
@@ -1229,4 +1229,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
