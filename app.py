@@ -15,8 +15,8 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 import google.generativeai as genai
 import pdfplumber
-GOOGLE_API_KEY= st.secrets["GOOGLE_API_KEY"]
-# load_dotenv()
+# GOOGLE_API_KEY= st.secrets["GOOGLE_API_KEY"]
+load_dotenv()
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -24,10 +24,10 @@ GOOGLE_API_KEY= st.secrets["GOOGLE_API_KEY"]
 SIMILARITY_THRESHOLD = 1.2   # FAISS L2 distance threshold; tune this based on your embeddings
 LOW_CONFIDENCE_CUTOFF = 30
 
-# api_key = os.getenv("GOOGLE_API_KEY")
-# if api_key is None:
-#     raise ValueError("GOOGLE_API_KEY environment variable is not set")
-# genai.configure(api_key=api_key)
+api_key = os.getenv("GOOGLE_API_KEY")
+if api_key is None:
+    raise ValueError("GOOGLE_API_KEY environment variable is not set")
+genai.configure(api_key=api_key)
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG & CUSTOM CSS
